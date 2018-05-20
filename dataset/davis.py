@@ -1,4 +1,5 @@
 import os
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from natsort import natsorted
@@ -9,9 +10,17 @@ class DavisDataset(Dataset):
     DAVIS dataset
     """
 
-    def __init__(self, base_dir, year=None, phase='train'):
+    def __init__(self, base_dir, image_size=None, year=None, phase='train'):
+        """
+
+        :param base_dir: path to DAVIS dataset directory
+        :param image_size: (width, height) tuple to resize the image
+        :param year: which train/val split of DAVIS to use
+        :param phase: train/val
+        """
         super().__init__()
         self._base_dir = base_dir
+        self._image_size = image_size
         self._images_dir = os.path.join(self._base_dir, 'JPEGImages', '480p')
         self._annotations_dir = os.path.join(self._base_dir, 'Annotations', '480p')
         if year is not None:
@@ -40,7 +49,18 @@ class DavisDataset(Dataset):
         # Load the <idx>th image and annotation and return a sample
         image_path, annotation_path, frame_no, label = self._frame_data[idx]
         image = Image.open(image_path).convert('RGB')
-        annotation = Image.open(annotation_path).convert('RGB')
+        annotation = Image.open(annotation_path).convert('L')
+        if self._image_size is not None:
+            image = image.resize(self._image_size)
+            annotation = annotation.resize(self._image_size)
+
+        # normalize the image
+        image = np.asarray(image)
+        image = (image - image.mean()) / image.std()
+
+        # convert annotation to binary image
+        annotation = np.asarray(annotation).copy()  # .copy() since original np.asarray(Image) object is read-only
+        annotation[annotation > 0] = 1
         sample = {
             'image': image,
             'annotation': annotation,
