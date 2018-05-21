@@ -1,19 +1,19 @@
 import os
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from .dataset import davis
-from .model import network
-from .model.loss import single_embedding_loss as sel
+from .model import network, loss, config
 
 root_dir = os.path.dirname(__file__)
-torch.set_default_tensor_type('torch.DoubleTensor')
+torch.set_default_tensor_type(config.DEFAULT_TENSOR_TYPE)
+torch.set_default_dtype(config.DEFAULT_DTYPE)
 
 # Model configuration
 image_width = 50
 image_height = 50
+embedding_vector_dims = 128
 
 # Training parameters
 # batch_size = 1
@@ -32,15 +32,16 @@ def main():
     triplet_sampler = davis.TripletSampler(dataset=data_source, randomize=True)
     data_loader = DataLoader(dataset=data_source, batch_sampler=triplet_sampler)
 
-    model = network.BFVOSNet()
+    model = network.BFVOSNet(embedding_vector_dims=embedding_vector_dims)
+    loss_fn = loss.MinTripletLoss(alpha=alpha)
     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
     for epoch in range(num_epochs):
         print("Epoch {}/{}".format(epoch + 1, num_epochs))
-        train(data_loader, model, optimizer)
+        train(data_loader, model, loss_fn, optimizer)
 
 
-def train(data_loader, model, optimizer):
+def train(data_loader, model, loss_fn, optimizer):
     for idx, sample in enumerate(data_loader):
         sample_frames = torch.autograd.Variable(sample['image'])
         embeddings = model(sample_frames)
@@ -49,9 +50,6 @@ def train(data_loader, model, optimizer):
         embedding_f1 = embeddings[1]
         embedding_f2 = embeddings[2]
         embedding_pool_points = torch.cat([embedding_f1, embedding_f2], 2)  # horizontally stacked frame1 and frame 2
-
-        print(embedding_a.size())
-        print(embedding_pool_points.size())
         # embedding_a/p/n is of shape (128, w/8, h/8)
 
         # TODO: Randomly sample anchor points from anchor frame
@@ -71,20 +69,25 @@ def train(data_loader, model, optimizer):
 
         # Compute loss for all foreground anchor points
         # For foreground anchor points,
-        # positive pool = all foreground points in all_pool_points
-        # negative  pool = all background points in all_pool_points
+        # positive pool: all foreground points in all_pool_points
+        # negative pool: all background points in all_pool_points
         fg_positive_pool = torch.cat([embedding_pool_points[:, x, y].unsqueeze(0) for x, y in fg_pool_indices])
         bg_positive_pool = torch.cat([embedding_pool_points[:, x, y].unsqueeze(0) for x, y in bg_pool_indices])
 
         fg_negative_pool = bg_positive_pool
         bg_negative_pool = fg_positive_pool
 
-        triplet_min_loss = torch.Tensor([0])
-        for point in fg_embedding_a:
-            triplet_min_loss += sel(point, fg_positive_pool) - sel(point, fg_negative_pool) + alpha
-        for point in bg_embedding_a:
-            triplet_min_loss += sel(point, bg_positive_pool) - sel(point, bg_negative_pool) + alpha
-        break
+        fg_loss = loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
+        bg_loss = loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+
+        final_loss = fg_loss + bg_loss
+        print("Loss = {}".format(final_loss))
+        optimizer.zero_grad()
+        final_loss.backward()
+        optimizer.step()
+
+        if idx == 2:
+            break
 
 
 if __name__ == "__main__":
