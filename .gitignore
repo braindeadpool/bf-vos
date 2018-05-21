@@ -107,3 +107,12 @@ venv.bak/
 
 # Pytorch
 *.pth
+.idea/
+bfvos.pdf
+bfvos/dataset/DAVIS-2017-trainval-480p.zip
+bfvos/dataset/DAVIS/
+deeplabv2.txt
+prototxt_and_model.zip
+run.py
+third-party/*
+tinkering.ipynb

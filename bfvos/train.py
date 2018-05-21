@@ -8,10 +8,12 @@ from .dataset import davis
 from .model import network, loss, config
 import logging
 import time
+import json
 
 # Logging setup
 logging.basicConfig()
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Set paths
 root_dir = os.path.dirname(__file__)
@@ -48,6 +50,17 @@ use_cuda = False
 num_anchor_sample_points = 256  # according to paper
 alpha = 1  # slack variable for loss
 
+training_config = {
+    'image_width': image_width,
+    'image_height': image_height,
+    'embedding_vector_dims': embedding_vector_dims,
+    'num_epochs': num_epochs,
+    'learning_rate': learning_rate,
+    'momentum': momentum,
+    'alpha': alpha
+}
+
+
 def main():
     data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                      image_size=(image_width, image_height), year=2016, phase='train',
@@ -65,10 +78,15 @@ def main():
 
     # Save final model
     model.eval().cpu()
-    save_model_filename = "epoch_{}_{}.model".format(num_epochs, str(time.time()).replace(" ", "_"))
+    save_model_filename = "epoch_{}_{}.model".format(num_epochs, str(time.time()).replace(" ", "_").replace(".", "_"))
     save_model_path = os.path.join(model_dir, save_model_filename)
     torch.save(model.state_dict(), save_model_path)
     logger.info("Model saved to {}".format(save_model_filename))
+
+    training_config_save_path = os.path.join(config_save_dir, save_model_filename.replace('.model', '.json'))
+    with open(training_config_save_path, 'w') as f:
+        json.dump(training_config, f)
+        logger.info("Training config saved to {}".format(training_config_save_path))
 
 
 def train(data_loader, model, loss_fn, optimizer, epoch):
