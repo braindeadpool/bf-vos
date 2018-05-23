@@ -4,8 +4,8 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from .dataset import davis
-from .model import network, loss, config
+from bfvos.dataset import davis
+from bfvos.model import network, loss, config
 import logging
 import time
 import json
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Set paths
-root_dir = os.path.dirname(__file__)
+root_dir = os.path.join('bfvos')
 model_dir = os.path.join(root_dir, 'model')
 pretrained_dir = os.path.join(model_dir, 'pretrained')
 deeplab_resnet_pre_trained_path = os.path.join(pretrained_dir, 'deeplabv2_resnet_pretrained_compatible.pth')
@@ -37,10 +37,12 @@ torch.set_default_tensor_type(config.DEFAULT_TENSOR_TYPE)
 torch.set_default_dtype(config.DEFAULT_DTYPE)
 
 # select which GPU, -1 if CPU
+has_cuda = False  # default
 gpu_id = 0
-device = torch.device("cuda:{}".format(gpu_id) if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
+    has_cuda = True
     logger.info('Using GPU: {} '.format(gpu_id))
+device = torch.device("cuda:{}".format(gpu_id) if has_cuda else "cpu")
 
 seed = None
 if seed is not None:
@@ -82,10 +84,19 @@ def main():
 
     model = network.BFVOSNet(embedding_vector_dims=embedding_vector_dims)
     loss_fn = loss.MinTripletLoss(alpha=alpha)
+    if has_cuda:
+        model = model.cuda()
+        loss_fn = loss_fn.cuda()
+        loss_fn.to(device)
+        logger.debug("Model and loss function moved to CUDA")
     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
     # Load pre-trained model
-    model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
+    if has_cuda:
+        model.load_state_dict(
+            torch.load(deeplab_resnet_pre_trained_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+    else:
+        model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
     logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
     # Load to appropriate device and set to training mode
     model.to(device).train()
@@ -112,7 +123,11 @@ def train(data_loader, model, loss_fn, optimizer, epoch):
     agg_fg_loss = 0.
     agg_bg_loss = 0.
     for idx, sample in enumerate(data_loader):
-        sample_frames = torch.autograd.Variable(sample['image'])
+        if has_cuda:
+            # move input tensors to gpu
+            sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
+            sample['annotation'] = sample['annotation'].to(device=device)
+        sample_frames = sample['image']
         embeddings = model(sample_frames)
 
         embedding_a = embeddings[0]
@@ -123,7 +138,10 @@ def train(data_loader, model, loss_fn, optimizer, epoch):
 
         # TODO: Randomly sample anchor points from anchor frame
         # For now, use all anchor points in the image
-        anchor_points = torch.ByteTensor(sample['annotation'][0])  # all anchor points
+        if has_cuda:
+            anchor_points = torch.cuda.ByteTensor(sample['annotation'][0])  # all anchor points
+        else:
+            anchor_points = torch.ByteTensor(sample['annotation'][0])  # all anchor points
         fg_anchor_indices = torch.nonzero(anchor_points)
         bg_anchor_indices = torch.nonzero(anchor_points == 0)
 
