@@ -41,9 +41,6 @@ class DeepLabV2Stripped(nn.Sequential):
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def load_model(self, path=os.path.join(models_dir, 'deeplabv2_resnet101_COCO_init.pth')):
-        return torch.load(path)
-
 
 if __name__ == '__main__':
     model = DeepLabV2Stripped(n_blocks=[3, 4, 23, 3])

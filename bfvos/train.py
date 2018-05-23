@@ -18,19 +18,30 @@ logger.setLevel(logging.DEBUG)
 # Set paths
 root_dir = os.path.dirname(__file__)
 model_dir = os.path.join(root_dir, 'model')
-checkpoint_dir = os.path.join(model_dir)
-config_save_dir = os.path.join(model_dir)
+pretrained_dir = os.path.join(model_dir, 'pretrained')
+deeplab_resnet_pre_trained_path = os.path.join(pretrained_dir, 'deeplabv2_resnet_pretrained_compatible.pth')
+checkpoint_dir = os.path.join(model_dir, 'checkpoints')
+config_save_dir = os.path.join(model_dir, 'configs')
+
+if not os.path.exists(checkpoint_dir):
+    os.mkdir(checkpoint_dir)
+if not os.path.exists(config_save_dir):
+    os.mkdir(config_save_dir)
 
 # Intervals
 log_interval = 10
 checkpoint_interval = 10
 
 # Pytorch configs
-device = "cpu"
-# device = "cuda"
 torch.set_default_tensor_type(config.DEFAULT_TENSOR_TYPE)
 torch.set_default_dtype(config.DEFAULT_DTYPE)
-torch.device(device)
+
+# select which GPU, -1 if CPU
+gpu_id = 0
+device = torch.device("cuda:{}".format(gpu_id) if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    logger.info('Using GPU: {} '.format(gpu_id))
+
 seed = None
 if seed is not None:
     np.random.seed(seed)
@@ -57,7 +68,8 @@ training_config = {
     'num_epochs': num_epochs,
     'learning_rate': learning_rate,
     'momentum': momentum,
-    'alpha': alpha
+    'alpha': alpha,
+    'device': str(torch.device)
 }
 
 
@@ -72,6 +84,13 @@ def main():
     loss_fn = loss.MinTripletLoss(alpha=alpha)
     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
+    # Load pre-trained model
+    model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
+    logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
+    # Load to appropriate device and set to training mode
+    model.to(device).train()
+
+    # Train
     for epoch in range(num_epochs):
         logger.info("Epoch {}/{}".format(epoch + 1, num_epochs))
         train(data_loader, model, loss_fn, optimizer, epoch)
