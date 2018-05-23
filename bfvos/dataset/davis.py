@@ -22,6 +22,12 @@ class DavisDataset(Dataset):
         """
         super().__init__()
         self._base_dir = base_dir
+        if phase in ['train', 'val', 'trainval']:
+            self._base_dir = os.path.join(self._base_dir, 'trainval')
+        elif phase in ['test', 'testdev']:
+            self._base_dir = os.path.join(self._base_dir, 'testdev')
+        elif phase == 'testchallenge':
+            self._base_dir = os.path.join(self._base_dir, 'testchallenge')
         self._image_size = image_size
         self._images_dir = os.path.join(self._base_dir, 'JPEGImages', '480p')
         self._annotations_dir = os.path.join(self._base_dir, 'Annotations', '480p')
@@ -60,7 +66,7 @@ class DavisDataset(Dataset):
         annotation = Image.open(annotation_path).convert('L')
         if self._image_size is not None:
             image = image.resize(self._image_size)
-            annotation = annotation.resize((self._image_size[0]//8+1, self._image_size[1]//8+1))
+            annotation = annotation.resize((self._image_size[0] // 8 + 1, self._image_size[1] // 8 + 1))
 
         # normalize the image
         image = np.asarray(image)
