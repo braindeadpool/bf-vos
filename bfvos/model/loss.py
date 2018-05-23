@@ -39,8 +39,6 @@ class MinTripletLoss(torch.nn.Module):
     def forward(self, anchor_points, positive_pool, negative_pool):
         positive_distances = distance_matrix(anchor_points, positive_pool)
         negative_distances = distance_matrix(anchor_points, negative_pool)
-        slack = torch.autograd.Variable(
-            torch.tensor(anchor_points.size(0) * self._alpha, dtype=config.DEFAULT_DTYPE),
-            requires_grad=False)
+        slack = torch.tensor(anchor_points.size(0) * self._alpha, dtype=config.DEFAULT_DTYPE, requires_grad=False)
         return torch.min(positive_distances, 1)[0].sum() - torch.min(negative_distances, 1)[
             0].sum() + slack
