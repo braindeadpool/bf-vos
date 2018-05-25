@@ -30,6 +30,12 @@ class BFVOSNet(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+    def freeze_feature_extraction(self):
+        for name, module in self.named_children():
+            if name.find('fe_') != -1:
+                for param in module.parameters():
+                    param.requires_grad = False
+
 
 if __name__ == "__main__":
     model = BFVOSNet()
