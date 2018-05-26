@@ -212,6 +212,7 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
 
         fg_loss = 0.
         bg_loss = 0.
+        num_anchor_points_per_batch = 0
         loss_tensor_computed = False  # set to true once one loss term is computed, so we can backprop
         # sample_frames and embeddings are triplets concatenated together. Let's split them out into triplet frames.
         batch_size = int(sample_frames.size(0) / 3)
@@ -228,14 +229,15 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
                 continue
             else:
                 fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
-
+                num_anchor_points_per_batch += fg_embedding_a.size(0) + bg_embedding_a.size(0)
             fg_loss += loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
             bg_loss += loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
             loss_tensor_computed = True
 
         if not loss_tensor_computed:
             logger.debug("Skipping iteration {} due to no samples".format(idx + 1))
-        final_loss = (fg_loss + bg_loss) / batch_size
+            continue
+        final_loss = (fg_loss + bg_loss) / (batch_size * num_anchor_points_per_batch)
 
         # Backpropagation
         optimizer.zero_grad()
