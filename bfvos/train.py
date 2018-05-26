@@ -18,7 +18,6 @@ from torchnet.meter import MovingAverageValueMeter
 # Logging setup
 logging.basicConfig()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Set paths
 root_dir = os.path.join('bfvos')
@@ -69,6 +68,8 @@ def parse_args():
     # num_anchor_sample_points = 256  # according to paper
     parser.add_argument('-a', '--alpha', type=float, default=1.0, help='slack variable for loss')
     parser.add_argument('--num-val-samples', type=int, default=10, help='number of validation samples to evaluate')
+    parser.add_argument('-f', '--log-file', type=str, default=None,
+                        help='path to log file, setting this will log all messages to this file')
     parser.add_argument('-v', '--verbose', action='store_true', help='Print debug messages')
     return parser.parse_args()
 
@@ -76,6 +77,12 @@ def parse_args():
 def main():
     args = parse_args()
     if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    if args.log_file is not None:
+        logger_handler = logging.FileHandler(args.log_file)
+        logger_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        logger_handler.setFormatter(logger_formatter)
+        logger.addHandler(logger_handler)
         logger.setLevel(logging.DEBUG)
     train_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                            image_size=args.image_dims, year=2016, phase='train',
@@ -205,6 +212,7 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
 
         fg_loss = 0.
         bg_loss = 0.
+        loss_tensor_computed = False  # set to true once one loss term is computed, so we can backprop
         # sample_frames and embeddings are triplets concatenated together. Let's split them out into triplet frames.
         batch_size = int(sample_frames.size(0) / 3)
         for batch_idx in range(batch_size):
@@ -216,13 +224,17 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
 
             if triplet_pools is None:
                 # Skip as not enough triplet samples were generated (possibly due to downsampled/low-res ground truth)
-                logger.debug("Skipping iteration {}".format(idx + 1))
+                logger.debug("Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
                 continue
             else:
                 fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
 
             fg_loss += loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
             bg_loss += loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+            loss_tensor_computed = True
+
+        if not loss_tensor_computed:
+            logger.debug("Skipping iteration {} due to no samples".format(idx + 1))
         final_loss = (fg_loss + bg_loss) / batch_size
 
         # Backpropagation
