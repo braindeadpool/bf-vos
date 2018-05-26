@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument('-l', '--log-interval', type=int, default=10)
     parser.add_argument('-c', '--checkpoint-interval', type=int, default=10)
     # Training parameters
+    parser.add_argument('-b', '--batch-size', type=int, default=1, help='Number of triplets in each batch')
     parser.add_argument('-n', '--num-epochs', type=int, default=1)
     parser.add_argument('-r', '--learning-rate', type=float, default=0.01)
     parser.add_argument('-m', '--momentum', type=float, default=0.1)
@@ -79,7 +80,8 @@ def main():
     train_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                            image_size=args.image_dims, year=2016, phase='train',
                                            transform=davis.ToTensor())
-    train_triplet_sampler = davis.TripletSampler(dataset=train_data_source, randomize=True)
+    train_triplet_sampler = davis.TripletSampler(dataset=train_data_source, num_triplets=args.batch_size,
+                                                 randomize=True)
     train_data_loader = DataLoader(dataset=train_data_source, batch_sampler=train_triplet_sampler)
 
     val_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
@@ -140,11 +142,11 @@ def main():
         logger.info("Training config saved to {}".format(training_config_save_path))
 
 
-def create_triplet_pools(sample, embeddings):
+def create_triplet_pools(triplet_sample, embeddings):
     """
     Fast vectorized ops to create lots of point-wise triplets from a data loader's sample (3 frames) and embeddings
-    :param sample:
-    :param embeddings:
+    :param triplet_sample: dict where sample['image'] is a 3 x 3 W x H tensor
+    :param embeddings: 3 x 128 x (W/8) X (H/8) tensor
     :return:
     """
     embedding_a = embeddings[0]
@@ -156,9 +158,9 @@ def create_triplet_pools(sample, embeddings):
     # TODO: Randomly sample anchor points from anchor frame
     # For now, use all anchor points in the image
     if has_cuda:
-        anchor_points = torch.cuda.ByteTensor(sample['annotation'][0])  # all anchor points
+        anchor_points = torch.cuda.ByteTensor(triplet_sample['annotation'][0])  # all anchor points
     else:
-        anchor_points = torch.ByteTensor(sample['annotation'][0])  # all anchor points
+        anchor_points = torch.ByteTensor(triplet_sample['annotation'][0])  # all anchor points
 
     fg_anchor_indices = torch.nonzero(anchor_points)
     bg_anchor_indices = torch.nonzero(anchor_points == 0)
@@ -168,7 +170,7 @@ def create_triplet_pools(sample, embeddings):
 
     # all_pool_points is a binary tensor of shape (w/8, h/8).
     # For any index in all_pool_points, if it 1 => it is a foreground pixel
-    all_pool_points = torch.cat([sample['annotation'][1], sample['annotation'][2]], 1)
+    all_pool_points = torch.cat([triplet_sample['annotation'][1], triplet_sample['annotation'][2]], 1)
     fg_pool_indices = torch.nonzero(all_pool_points)
     bg_pool_indices = torch.nonzero(all_pool_points == 0)
 
@@ -201,18 +203,27 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
         sample_frames = sample['image']
         embeddings = model(sample_frames)
 
-        triplet_pools = create_triplet_pools(sample, embeddings)
+        fg_loss = 0.
+        bg_loss = 0.
+        # sample_frames and embeddings are triplets concatenated together. Let's split them out into triplet frames.
+        batch_size = int(sample_frames.size(0) / 3)
+        for batch_idx in range(batch_size):
+            triplet_sample = {}
+            for key in sample:
+                triplet_sample[key] = sample[key][3 * batch_idx:3 * batch_idx + 3]
+            triplet_embeddings = embeddings[3 * batch_idx:3 * batch_idx + 3]
+            triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings)
 
-        if triplet_pools is None:
-            # Skip because not enough triplet samples were generated (possibly due to downsampled/low-res ground truth)
-            logger.debug("Skipping iteration {}".format(idx + 1))
-            continue
-        else:
-            fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
+            if triplet_pools is None:
+                # Skip as not enough triplet samples were generated (possibly due to downsampled/low-res ground truth)
+                logger.debug("Skipping iteration {}".format(idx + 1))
+                continue
+            else:
+                fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
 
-        fg_loss = loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
-        bg_loss = loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
-        final_loss = fg_loss + bg_loss
+            fg_loss += loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
+            bg_loss += loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+        final_loss = (fg_loss + bg_loss) / batch_size
 
         # Backpropagation
         optimizer.zero_grad()

@@ -87,10 +87,11 @@ class DavisDataset(Dataset):
 
 
 class TripletSampler(sampler.Sampler):
-    def __init__(self, dataset, sequence=None, randomize=True):
+    def __init__(self, dataset, sequence=None, randomize=True, num_triplets=1):
         super().__init__(data_source=dataset)
         self._dataset = dataset
         self._randomize = randomize
+        self._num_triplets = num_triplets
         if sequence is not None:
             self._num_samples = len(self._dataset.sequence_to_sample_idx[sequence])
             self._sequences = [sequence]
@@ -100,12 +101,19 @@ class TripletSampler(sampler.Sampler):
 
     def __iter__(self):
         for seq in self._sequences:
+            triplets = []
             # Now create set of random (a, p, n) samples from this sequence
             seq_sample_idx = self._dataset.sequence_to_sample_idx[seq]
             for i, a in enumerate(seq_sample_idx):
                 # Randomly sample two non-anchor separate frames - one for positive pool and one for negative
                 p, n = np.random.choice(seq_sample_idx[:i] + seq_sample_idx[i + 1:], size=2, replace=False)
-                yield (a, p, n)
+                triplets += [a, p, n]
+
+                if len(triplets) % (3 * self._num_triplets) == 0:
+                    yield triplets
+                    triplets = []
+            if len(triplets) > 0:
+                yield triplets
 
     def __len__(self):
         return self._num_samples
