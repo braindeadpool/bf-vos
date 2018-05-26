@@ -18,7 +18,7 @@ from torchnet.meter import MovingAverageValueMeter
 # Logging setup
 logging.basicConfig()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 # Set paths
 root_dir = os.path.join('bfvos')
@@ -68,11 +68,14 @@ def parse_args():
     # num_anchor_sample_points = 256  # according to paper
     parser.add_argument('-a', '--alpha', type=float, default=1.0, help='slack variable for loss')
     parser.add_argument('--num-val-samples', type=int, default=10, help='number of validation samples to evaluate')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Print debug messages')
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
     train_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                            image_size=args.image_dims, year=2016, phase='train',
                                            transform=davis.ToTensor())
