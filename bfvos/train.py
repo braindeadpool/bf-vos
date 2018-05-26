@@ -237,7 +237,9 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
         if not loss_tensor_computed:
             logger.debug("Skipping iteration {} due to no samples".format(idx + 1))
             continue
-        final_loss = (fg_loss + bg_loss) / (batch_size * num_anchor_points_per_batch)
+        fg_loss /= (batch_size * num_anchor_points_per_batch)
+        bg_loss /= (batch_size * num_anchor_points_per_batch)
+        final_loss = fg_loss + bg_loss
 
         # Backpropagation
         optimizer.zero_grad()
