@@ -321,8 +321,8 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
                     continue
                 else:
                     fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
-                fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
-                bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+                fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool).item()
+                bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool).item()
                 logger.debug("VAL: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
                 loss_tensor_computed = True
 
@@ -333,16 +333,15 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
             final_loss = (fg_loss + bg_loss) * 0.5
             val_loss_meter.add(final_loss)
 
-            agg_fg_loss += fg_loss.item()
-            agg_bg_loss += bg_loss.item()
+            agg_fg_loss += fg_loss
+            agg_bg_loss += bg_loss
 
         logger.info("VAL: Epoch {}".format(epoch))
         logger.info(
             "VAL: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(
                 agg_fg_loss / (idx + 1),
                 agg_bg_loss / (idx + 1),
-                final_loss.item() / (
-                    idx + 1)))
+                final_loss / (idx + 1)))
         summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
 
 
