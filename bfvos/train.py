@@ -60,7 +60,9 @@ def parse_args():
     parser.add_argument('-e', '--embedding-vector-dims', type=int, default=128, help='Embedding vector dimensions')
     # Intervals
     parser.add_argument('-l', '--log-interval', type=int, default=10)
-    parser.add_argument('-c', '--checkpoint-interval', type=int, default=10)
+    parser.add_argument('-c', '--checkpoint-interval', type=int, default=50)
+    parser.add_argument('--val-interval', type=int, default=10,
+                        help='Iterations after which to evaluate validation set')
     # Training parameters
     parser.add_argument('-b', '--batch-size', type=int, default=1, help='Number of triplets in each batch')
     parser.add_argument('-n', '--num-epochs', type=int, default=1)
@@ -68,7 +70,8 @@ def parse_args():
     parser.add_argument('-m', '--momentum', type=float, default=0.1)
     # num_anchor_sample_points = 256  # according to paper
     parser.add_argument('-a', '--alpha', type=float, default=1.0, help='slack variable for loss')
-    parser.add_argument('--num-val-samples', type=int, default=10, help='number of validation samples to evaluate')
+    parser.add_argument('--num-val-batches', type=int, default=10,
+                        help='number of validation batches to evaluate, set to -1 to evaluate whole set')
     parser.add_argument('-f', '--log-file', type=str, default=None,
                         help='path to log file, setting this will log all messages to this file')
     parser.add_argument('-v', '--verbose', action='store_true', help='Print debug messages')
@@ -97,7 +100,7 @@ def main():
     val_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                          image_size=args.image_dims, year=2016, phase='val',
                                          transform=davis.ToTensor())
-    val_triplet_sampler = davis.TripletSampler(dataset=val_data_source, num_triplets=args.num_val_samples,
+    val_triplet_sampler = davis.TripletSampler(dataset=val_data_source, num_triplets=args.num_val_batches,
                                                randomize=True)
     val_data_loader = DataLoader(dataset=val_data_source, batch_sampler=val_triplet_sampler)
 
@@ -134,7 +137,8 @@ def main():
     for epoch in tqdm(range(args.num_epochs)):
         logger.info("Epoch {}/{}".format(epoch + 1, args.num_epochs))
         train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
-              val_loss_meter, summary_writer, args.log_interval, args.checkpoint_interval, args.num_val_samples)
+              val_loss_meter, summary_writer, args.log_interval, args.checkpoint_interval, args.val_interval,
+              args.num_val_batches)
         # Save final model
         model.eval().cpu()
         save_model_filename = "epoch_{}_{}.model".format(args.num_epochs,
@@ -202,7 +206,7 @@ def create_triplet_pools(triplet_sample, embeddings):
 
 
 def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
-          val_loss_meter, summary_writer, log_interval, checkpoint_interval, num_val_samples):
+          val_loss_meter, summary_writer, log_interval, checkpoint_interval, val_interval, num_val_batches):
     agg_fg_loss = 0.
     agg_bg_loss = 0.
     for idx, sample in enumerate(train_data_loader):
@@ -233,7 +237,7 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
                 fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
             fg_loss += train_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
             bg_loss += train_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
-            logger.debug("fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
+            logger.debug("TRAIN: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
             loss_tensor_computed = True
 
         if not loss_tensor_computed:
@@ -250,19 +254,20 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
         optimizer.step()
 
         # Evaluate validation loss
-        # validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_samples)
-        # model.to(device).train()
+        if (idx + 1) % val_interval == 0:
+            validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches)
+            model.train()
 
         # Logging
         agg_fg_loss += fg_loss.item()
         agg_bg_loss += bg_loss.item()
         if (idx + 1) % log_interval == 0:
-            logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
-            logger.info("Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(agg_fg_loss / (idx + 1),
-                                                                                      agg_bg_loss / (idx + 1),
-                                                                                      (
-                                                                                          agg_fg_loss + agg_bg_loss) / (
-                                                                                          idx + 1)))
+            logger.info("TRAIN: Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
+            logger.info("TRAIN: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(agg_fg_loss / (idx + 1),
+                                                                                             agg_bg_loss / (idx + 1),
+                                                                                             (
+                                                                                                 agg_fg_loss + agg_bg_loss) / (
+                                                                                                 idx + 1)))
             summary_writer.add_scalar('train_loss', train_loss_meter.value()[0], idx + 1)
             for i, o in enumerate(optimizer.param_groups):
                 summary_writer.add_scalar('train_lr_group{}'.format(i), o['lr'], idx + 1)
@@ -301,6 +306,7 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
             fg_loss = 0.
             bg_loss = 0.
             batch_size = int(sample_frames.size(0) / 3)
+            loss_tensor_computed = False
             for batch_idx in range(batch_size):
                 triplet_sample = {}
                 for key in sample:
@@ -317,8 +323,11 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
                     fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
                 fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
                 bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
-                logger.debug("fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
+                logger.debug("VAL: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
+                loss_tensor_computed = True
 
+            if not loss_tensor_computed:
+                continue
             fg_loss /= batch_size
             bg_loss /= batch_size
             final_loss = (fg_loss + bg_loss) * 0.5
@@ -326,14 +335,15 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
 
             agg_fg_loss += fg_loss.item()
             agg_bg_loss += bg_loss.item()
-            logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
-            logger.info(
-                "Avg FG Val Loss: {}, Avg BG Val Loss: {}, Avg Total Val Loss: {}".format(
-                    agg_fg_loss / (idx + 1),
-                    agg_bg_loss / (idx + 1),
-                    final_loss.item() / (
-                        idx + 1)))
-            summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
+
+        logger.info("VAL: Epoch {}".format(epoch))
+        logger.info(
+            "VAL: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(
+                agg_fg_loss / (idx + 1),
+                agg_bg_loss / (idx + 1),
+                final_loss.item() / (
+                    idx + 1)))
+        summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
 
 
 if __name__ == "__main__":
