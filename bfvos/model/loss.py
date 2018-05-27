@@ -51,7 +51,7 @@ def validation_loss(anchor_points, positive_pool, negative_pool):
     # For each anchor point, for each combination of positive, negative pair, count how many pairs exist
     # where the positive point is farther than negative point
     num_incorrect = torch.sum(torch.gt(p_, n_))
-    return num_incorrect / (N * M * L)
+    return num_incorrect.float() / float(N * M * L)
 
 
 class MinTripletLoss(torch.nn.Module):

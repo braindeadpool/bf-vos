@@ -30,7 +30,9 @@ class BFVOSNet(nn.Module):
         init_weights(self.network)
 
     def forward(self, x):
-        return self.network(x)
+        embedding = self.network(x)
+        normalized_embedding = embedding / embedding.pow(2).sum(1, keepdim=True).sqrt()
+        return normalized_embedding
 
     def freeze_feature_extraction(self):
         for name, m in self.network.named_children():

@@ -13,7 +13,7 @@ import json
 
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
-from torchnet.meter import MovingAverageValueMeter
+from torchnet.meter import MovingAverageValueMeter, AverageValueMeter
 
 # Logging setup
 logging.basicConfig()
@@ -98,12 +98,12 @@ def main():
     val_data_loader = DataLoader(dataset=val_data_source, batch_sampler=val_triplet_sampler)
 
     model = network.BFVOSNet(embedding_vector_dims=args.embedding_vector_dims)
-    loss_fn = loss.MinTripletLoss(alpha=args.alpha)
+    train_loss_fn = loss.MinTripletLoss(alpha=args.alpha)
     val_loss_fn = loss.validation_loss
     if has_cuda:
         model = model.cuda()
-        loss_fn = loss_fn.cuda()
-        loss_fn.to(device)
+        train_loss_fn = train_loss_fn.cuda()
+        train_loss_fn.to(device)
         logger.debug("Model and loss function moved to CUDA")
 
     # Load pre-trained model
@@ -122,30 +122,28 @@ def main():
                           momentum=args.momentum)
 
     # Initialize meter and writer
-    loss_meter = MovingAverageValueMeter(20)
+    train_loss_meter = MovingAverageValueMeter(20)
+    val_loss_meter = AverageValueMeter()
     summary_writer = SummaryWriter(tensorboard_save_dir)
 
     # Train
     for epoch in tqdm(range(args.num_epochs)):
         logger.info("Epoch {}/{}".format(epoch + 1, args.num_epochs))
-        train(epoch, train_data_loader, model, loss_fn, optimizer, loss_meter, summary_writer, args.log_interval,
-              args.checkpoint_interval)
-        validate(epoch, val_data_loader, model, val_loss_fn, loss_meter, summary_writer, args.log_interval,
-                 num_val_samples_to_evaluate=args.num_val_samples)
+        train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
+              val_loss_meter, summary_writer, args.log_interval, args.checkpoint_interval, args.num_val_samples)
+        # Save final model
+        model.eval().cpu()
+        save_model_filename = "epoch_{}_{}.model".format(args.num_epochs,
+                                                         str(time.time()).replace(" ", "_").replace(".", "_"))
+        save_model_path = os.path.join(model_dir, save_model_filename)
+        torch.save(model.state_dict(), save_model_path)
+        logger.info("Model saved to {}".format(save_model_filename))
 
-    # Save final model
-    model.eval().cpu()
-    save_model_filename = "epoch_{}_{}.model".format(args.num_epochs,
-                                                     str(time.time()).replace(" ", "_").replace(".", "_"))
-    save_model_path = os.path.join(model_dir, save_model_filename)
-    torch.save(model.state_dict(), save_model_path)
-    logger.info("Model saved to {}".format(save_model_filename))
-
-    training_config_save_path = os.path.join(config_save_dir, save_model_filename.replace('.model', '.json'))
-    training_config = vars(args)
-    training_config['device'] = str(torch.device)
-    with open(training_config_save_path, 'w') as f:
-        json.dump(training_config, f)
+        training_config_save_path = os.path.join(config_save_dir, save_model_filename.replace('.model', '.json'))
+        training_config = vars(args)
+        training_config['device'] = str(torch.device)
+        with open(training_config_save_path, 'w') as f:
+            json.dump(training_config, f)
         logger.info("Training config saved to {}".format(training_config_save_path))
 
 
@@ -199,10 +197,11 @@ def create_triplet_pools(triplet_sample, embeddings):
     return [fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool]
 
 
-def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_writer, log_interval, checkpoint_interval):
+def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
+          val_loss_meter, summary_writer, log_interval, checkpoint_interval, num_val_samples):
     agg_fg_loss = 0.
     agg_bg_loss = 0.
-    for idx, sample in enumerate(data_loader):
+    for idx, sample in enumerate(train_data_loader):
         if has_cuda:
             # move input tensors to gpu
             sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
@@ -228,8 +227,8 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
                 continue
             else:
                 fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
-            fg_loss += loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
-            bg_loss += loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+            fg_loss += train_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
+            bg_loss += train_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
             logger.debug("fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
             loss_tensor_computed = True
 
@@ -239,23 +238,28 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
         fg_loss /= batch_size
         bg_loss /= batch_size
         final_loss = fg_loss + bg_loss
+        train_loss_meter.add(final_loss)
 
         # Backpropagation
         optimizer.zero_grad()
         final_loss.backward()
         optimizer.step()
 
-        # Logging
+        # Evaluate validation loss
+        validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_samples)
+        model.to(device).train()
 
+        # Logging
         agg_fg_loss += fg_loss.item()
         agg_bg_loss += bg_loss.item()
         if (idx + 1) % log_interval == 0:
             logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
             logger.info("Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(agg_fg_loss / (idx + 1),
                                                                                       agg_bg_loss / (idx + 1),
-                                                                                      (agg_fg_loss + agg_bg_loss) / (
+                                                                                      (
+                                                                                          agg_fg_loss + agg_bg_loss) / (
                                                                                           idx + 1)))
-            summary_writer.add_scalar('train_loss', loss_meter.value()[0], idx + 1)
+            summary_writer.add_scalar('train_loss', train_loss_meter.value()[0], idx + 1)
             for i, o in enumerate(optimizer.param_groups):
                 summary_writer.add_scalar('train_lr_group{}'.format(i), o['lr'], idx + 1)
                 # for name, param in model.named_parameters():
@@ -274,8 +278,7 @@ def train(epoch, data_loader, model, loss_fn, optimizer, loss_meter, summary_wri
             model.freeze_feature_extraction()
 
 
-def validate(epoch, data_loader, model, val_loss, loss_meter, summary_writer, log_interval,
-             num_val_samples_to_evaluate=-1):
+def validate(epoch, data_loader, model, val_loss, loss_meter, summary_writer, num_val_samples_to_evaluate=-1):
     model.eval()
     with torch.no_grad():
         agg_fg_loss = 0.
@@ -294,20 +297,19 @@ def validate(epoch, data_loader, model, val_loss, loss_meter, summary_writer, lo
 
             fg_loss = val_loss(fg_embedding_a, fg_positive_pool, fg_negative_pool)
             bg_loss = val_loss(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+            loss_meter.add((fg_loss + bg_loss) / 2.0)
 
             agg_fg_loss += fg_loss.item()
             agg_bg_loss += bg_loss.item()
-            if (idx + 1) % log_interval == 0 or idx == num_val_samples_to_evaluate:
+            if idx == num_val_samples_to_evaluate:
                 logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
                 logger.info(
-                    "Avg FG Val Loss: {}, Avg BG Val Loss: {}, Avg Total Val Loss: {}".format(agg_fg_loss / (idx + 1),
-                                                                                              agg_bg_loss / (idx + 1),
-                                                                                              (
-                                                                                                  agg_fg_loss + agg_bg_loss) / (
-                                                                                                  idx + 1)))
+                    "Avg FG Val Loss: {}, Avg BG Val Loss: {}, Avg Total Val Loss: {}".format(
+                        agg_fg_loss / (idx + 1),
+                        agg_bg_loss / (idx + 1),
+                        0.5 * (agg_fg_loss + agg_bg_loss) / (
+                            idx + 1)))
                 summary_writer.add_scalar('val_loss', loss_meter.value()[0], idx + 1)
-
-            if idx == num_val_samples_to_evaluate:
                 break
 
 
