@@ -8,34 +8,32 @@ from .deeplabv2resnet import DeepLabV2Stripped
 from .utils import init_weights
 
 
-class BFVOSNet(nn.Module):
+class BFVOSNet(DeepLabV2Stripped):
     def __init__(self, embedding_vector_dims=128):
         """
 
         :param embedding_vector_dims: Embedding vector dimensions
         """
-        super().__init__()
-        # This will initialize the DeepLabv2Resnet as feature extractor
-        self.network = DeepLabV2Stripped(n_blocks=[3, 4, 23, 3])
+        super().__init__(n_blocks=[3, 4, 23, 3])
         # TODO: Concatenate array of pixel numbers and frame numbers (spatial and temporal information)
         # Add the embedding head
-        self.network.add_module('eh_layer1',
-                                nn.Sequential(
-                                    OrderedDict([
-                                        ('conv1', nn.Conv2d(2048, embedding_vector_dims, 1, 1)),
-                                        ('relu1', nn.ReLU()),
-                                    ])
-                                ))
-        self.network.add_module('eh_layer2', nn.Conv2d(embedding_vector_dims, embedding_vector_dims, 1, 1))
-        init_weights(self.network)
+        self.add_module('eh_layer1',
+                        nn.Sequential(
+                            OrderedDict([
+                                ('conv1', nn.Conv2d(2048, embedding_vector_dims, 1, 1)),
+                                ('relu1', nn.ReLU()),
+                            ])
+                        ))
+        self.add_module('eh_layer2', nn.Conv2d(embedding_vector_dims, embedding_vector_dims, 1, 1))
+        init_weights(self)
 
     def forward(self, x):
-        embedding = self.network(x)
+        embedding = super().forward(x)
         normalized_embedding = embedding / embedding.pow(2).sum(1, keepdim=True).sqrt()
         return normalized_embedding
 
     def freeze_feature_extraction(self):
-        for name, m in self.network.named_children():
+        for name, m in self.named_children():
             if name.find('fe_') != -1:
                 for param in m.parameters():
                     param.requires_grad = False
