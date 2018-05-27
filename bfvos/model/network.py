@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch
 from collections import OrderedDict
 from .deeplabv2resnet import DeepLabV2Stripped
+from .utils import init_weights
 
 
 class BFVOSNet(nn.Module):
@@ -26,14 +27,15 @@ class BFVOSNet(nn.Module):
                                     ])
                                 ))
         self.network.add_module('eh_layer2', nn.Conv2d(embedding_vector_dims, embedding_vector_dims, 1, 1))
+        init_weights(self.network)
 
     def forward(self, x):
         return self.network(x)
 
     def freeze_feature_extraction(self):
-        for name, module in self.named_children():
+        for name, m in self.network.named_children():
             if name.find('fe_') != -1:
-                for param in module.parameters():
+                for param in m.parameters():
                     param.requires_grad = False
 
 

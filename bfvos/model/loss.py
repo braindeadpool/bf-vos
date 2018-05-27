@@ -1,7 +1,7 @@
 # Loss function
 
 import torch
-from . import config
+import torch.nn.functional as F
 
 
 def single_embedding_loss(anchor_point, pool):
@@ -29,6 +29,9 @@ def distance_matrix(x, y):
     y_norm = (y ** 2).sum(1).view(1, -1)
     dist = x_norm + y_norm - 2.0 * torch.mm(x, y_t)
     return torch.clamp(dist, min=0.0)
+    # differences = x.unsqueeze(1) - y.unsqueeze(0)
+    # distances = torch.sum(differences * differences, -1)
+    # return distances
 
 
 def validation_loss(anchor_points, positive_pool, negative_pool):
@@ -59,6 +62,6 @@ class MinTripletLoss(torch.nn.Module):
     def forward(self, anchor_points, positive_pool, negative_pool):
         positive_distances = distance_matrix(anchor_points, positive_pool)
         negative_distances = distance_matrix(anchor_points, negative_pool)
-        slack = torch.tensor(anchor_points.size(0) * self._alpha, dtype=config.DEFAULT_DTYPE, requires_grad=False)
-        return torch.min(positive_distances, 1)[0].sum() - torch.min(negative_distances, 1)[
-            0].sum() + slack
+        losses = F.relu(torch.min(positive_distances, 1)[0].sum() - torch.min(negative_distances, 1)[
+            0].sum() + self._alpha)
+        return losses.mean()
