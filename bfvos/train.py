@@ -97,7 +97,8 @@ def main():
     val_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                          image_size=args.image_dims, year=2016, phase='val',
                                          transform=davis.ToTensor())
-    val_triplet_sampler = davis.TripletSampler(dataset=val_data_source, randomize=True)
+    val_triplet_sampler = davis.TripletSampler(dataset=val_data_source, num_triplets=args.num_val_samples,
+                                               randomize=True)
     val_data_loader = DataLoader(dataset=val_data_source, batch_sampler=val_triplet_sampler)
 
     model = network.BFVOSNet(embedding_vector_dims=args.embedding_vector_dims)
@@ -281,12 +282,14 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             model.freeze_feature_extraction()
 
 
-def validate(epoch, data_loader, model, val_loss, loss_meter, summary_writer, num_val_samples_to_evaluate=-1):
+def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1):
     model.eval()
     with torch.no_grad():
         agg_fg_loss = 0.
         agg_bg_loss = 0.
         for idx, sample in enumerate(data_loader):
+            if idx == num_val_batches:
+                break
             if has_cuda:
                 # move input tensors to gpu
                 sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
@@ -295,25 +298,42 @@ def validate(epoch, data_loader, model, val_loss, loss_meter, summary_writer, nu
             sample_frames = sample['image']
             embeddings = model(sample_frames)
 
-            fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = create_triplet_pools(
-                sample, embeddings)
+            fg_loss = 0.
+            bg_loss = 0.
+            batch_size = int(sample_frames.size(0) / 3)
+            for batch_idx in range(batch_size):
+                triplet_sample = {}
+                for key in sample:
+                    triplet_sample[key] = sample[key][3 * batch_idx:3 * batch_idx + 3]
+                triplet_embeddings = embeddings[3 * batch_idx:3 * batch_idx + 3]
+                triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings)
 
-            fg_loss = val_loss(fg_embedding_a, fg_positive_pool, fg_negative_pool)
-            bg_loss = val_loss(bg_embedding_a, bg_positive_pool, bg_negative_pool)
-            loss_meter.add((fg_loss + bg_loss) / 2.0)
+                if triplet_pools is None:
+                    # Skip as not enough triplet samples were generated
+                    # (possibly due to downsampled/low-res ground truth)
+                    logger.debug("Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
+                    continue
+                else:
+                    fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
+                fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
+                bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
+                logger.debug("fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
+
+            fg_loss /= batch_size
+            bg_loss /= batch_size
+            final_loss = (fg_loss + bg_loss) * 0.5
+            val_loss_meter.add(final_loss)
 
             agg_fg_loss += fg_loss.item()
             agg_bg_loss += bg_loss.item()
-            if idx == num_val_samples_to_evaluate:
-                logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
-                logger.info(
-                    "Avg FG Val Loss: {}, Avg BG Val Loss: {}, Avg Total Val Loss: {}".format(
-                        agg_fg_loss / (idx + 1),
-                        agg_bg_loss / (idx + 1),
-                        0.5 * (agg_fg_loss + agg_bg_loss) / (
-                            idx + 1)))
-                summary_writer.add_scalar('val_loss', loss_meter.value()[0], idx + 1)
-                break
+            logger.info("Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
+            logger.info(
+                "Avg FG Val Loss: {}, Avg BG Val Loss: {}, Avg Total Val Loss: {}".format(
+                    agg_fg_loss / (idx + 1),
+                    agg_bg_loss / (idx + 1),
+                    final_loss.item() / (
+                        idx + 1)))
+            summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
 
 
 if __name__ == "__main__":
