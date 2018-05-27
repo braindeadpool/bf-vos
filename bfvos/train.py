@@ -1,6 +1,7 @@
 import argparse
 import os
 import numpy as np
+import sys
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -77,12 +78,14 @@ def parse_args():
 def main():
     args = parse_args()
     if args.verbose:
+        default_handler = logging.StreamHandler(sys.stdout)
+        logger.addHandler(default_handler)
         logger.setLevel(logging.DEBUG)
     if args.log_file is not None:
-        logger_handler = logging.FileHandler(args.log_file)
+        logfile_handler = logging.FileHandler(args.log_file)
         logger_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
-        logger_handler.setFormatter(logger_formatter)
-        logger.addHandler(logger_handler)
+        logfile_handler.setFormatter(logger_formatter)
+        logger.addHandler(logfile_handler)
         logger.setLevel(logging.DEBUG)
     train_data_source = davis.DavisDataset(base_dir=os.path.join(root_dir, 'dataset', 'DAVIS'),
                                            image_size=args.image_dims, year=2016, phase='train',
@@ -246,8 +249,8 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
         optimizer.step()
 
         # Evaluate validation loss
-        validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_samples)
-        model.to(device).train()
+        # validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_samples)
+        # model.to(device).train()
 
         # Logging
         agg_fg_loss += fg_loss.item()
