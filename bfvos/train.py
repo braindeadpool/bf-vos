@@ -238,7 +238,6 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
                 fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
             fg_loss += train_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool)
             bg_loss += train_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool)
-            logger.debug("TRAIN: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
             loss_tensor_computed = True
 
         if not loss_tensor_computed:
@@ -248,6 +247,7 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
         bg_loss /= batch_size
         final_loss = fg_loss + bg_loss
         train_loss_meter.add(final_loss)
+        logger.debug("TRAIN: fg_loss = {}, bg_loss = {}, final_loss={}".format(fg_loss, bg_loss, final_loss))
 
         # Backpropagation
         optimizer.zero_grad()
@@ -327,7 +327,6 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
                     fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
                 fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool).item()
                 bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool).item()
-                logger.debug("VAL: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
                 loss_tensor_computed = True
 
             if not loss_tensor_computed:
@@ -336,6 +335,7 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
             bg_loss /= batch_size
             final_loss = (fg_loss + bg_loss) * 0.5
             val_loss_meter.add(final_loss)
+            logger.debug("VAL: fg_loss = {}, bg_loss = {}, final_loss = {}".format(fg_loss, bg_loss, final_loss))
 
             agg_fg_loss += fg_loss
             agg_bg_loss += bg_loss
