@@ -155,7 +155,7 @@ def main():
         logger.info("Training config saved to {}".format(training_config_save_path))
 
 
-def create_triplet_pools(triplet_sample, embeddings):
+def create_triplet_pools(triplet_sample, embeddings, force_no_cuda=False):
     """
     Fast vectorized ops to create lots of point-wise triplets from a data loader's sample (3 frames) and embeddings
     :param triplet_sample: dict where sample['image'] is a 3 x 3 W x H tensor
@@ -170,7 +170,7 @@ def create_triplet_pools(triplet_sample, embeddings):
 
     # TODO: Randomly sample anchor points from anchor frame
     # For now, use all anchor points in the image
-    if has_cuda:
+    if not force_no_cuda and has_cuda:
         anchor_points = torch.cuda.ByteTensor(triplet_sample['annotation'][0])  # all anchor points
     else:
         anchor_points = torch.ByteTensor(triplet_sample['annotation'][0])  # all anchor points
@@ -257,7 +257,8 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
         if (idx + 1) % val_interval == 0:
             model.freeze_bn()
             model.eval().cpu()
-            validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches)
+            validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches,
+                     force_no_cuda=True)
             model.train().to(device)
             model.freeze_feature_extraction()
 
@@ -290,17 +291,18 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             model.freeze_feature_extraction()
 
 
-def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1):
+def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1,
+             force_no_cuda=False):
     with torch.no_grad():
         agg_fg_loss = 0.
         agg_bg_loss = 0.
         for idx, sample in enumerate(data_loader):
             if idx == num_val_batches:
                 break
-            # if has_cuda:
-            #     # move input tensors to gpu
-            #     sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
-            #     sample['annotation'] = sample['annotation'].to(device=device)
+            if has_cuda and not force_no_cuda:
+                # move input tensors to gpu
+                sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
+                sample['annotation'] = sample['annotation'].to(device=device)
 
             sample_frames = sample['image']
             embeddings = model(sample_frames)
@@ -314,7 +316,7 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
                 for key in sample:
                     triplet_sample[key] = sample[key][3 * batch_idx:3 * batch_idx + 3]
                 triplet_embeddings = embeddings[3 * batch_idx:3 * batch_idx + 3]
-                triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings)
+                triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings, force_no_cuda)
 
                 if triplet_pools is None:
                     # Skip as not enough triplet samples were generated
