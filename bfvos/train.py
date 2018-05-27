@@ -255,6 +255,8 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
 
         # Evaluate validation loss
         if (idx + 1) % val_interval == 0:
+            model.freeze_bn()
+            model.eval()
             validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches)
             model.train()
             model.freeze_feature_extraction()
@@ -288,61 +290,61 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             model.freeze_feature_extraction()
 
 
-@torch.no_grad()
 def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1):
-    agg_fg_loss = 0.
-    agg_bg_loss = 0.
-    for idx, sample in enumerate(data_loader):
-        if idx == num_val_batches:
-            break
-        if has_cuda:
-            # move input tensors to gpu
-            sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
-            sample['annotation'] = sample['annotation'].to(device=device)
+    with torch.no_grad():
+        agg_fg_loss = 0.
+        agg_bg_loss = 0.
+        for idx, sample in enumerate(data_loader):
+            if idx == num_val_batches:
+                break
+            if has_cuda:
+                # move input tensors to gpu
+                sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
+                sample['annotation'] = sample['annotation'].to(device=device)
 
-        sample_frames = sample['image']
-        embeddings = model(sample_frames)
+            sample_frames = sample['image']
+            embeddings = model(sample_frames)
 
-        fg_loss = 0.
-        bg_loss = 0.
-        batch_size = int(sample_frames.size(0) / 3)
-        loss_tensor_computed = False
-        for batch_idx in range(batch_size):
-            triplet_sample = {}
-            for key in sample:
-                triplet_sample[key] = sample[key][3 * batch_idx:3 * batch_idx + 3]
-            triplet_embeddings = embeddings[3 * batch_idx:3 * batch_idx + 3]
-            triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings)
+            fg_loss = 0.
+            bg_loss = 0.
+            batch_size = int(sample_frames.size(0) / 3)
+            loss_tensor_computed = False
+            for batch_idx in range(batch_size):
+                triplet_sample = {}
+                for key in sample:
+                    triplet_sample[key] = sample[key][3 * batch_idx:3 * batch_idx + 3]
+                triplet_embeddings = embeddings[3 * batch_idx:3 * batch_idx + 3]
+                triplet_pools = create_triplet_pools(triplet_sample, triplet_embeddings)
 
-            if triplet_pools is None:
-                # Skip as not enough triplet samples were generated
-                # (possibly due to downsampled/low-res ground truth)
-                logger.debug("Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
+                if triplet_pools is None:
+                    # Skip as not enough triplet samples were generated
+                    # (possibly due to downsampled/low-res ground truth)
+                    logger.debug("Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
+                    continue
+                else:
+                    fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
+                fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool).item()
+                bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool).item()
+                logger.debug("VAL: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
+                loss_tensor_computed = True
+
+            if not loss_tensor_computed:
                 continue
-            else:
-                fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
-            fg_loss += val_loss_fn(fg_embedding_a, fg_positive_pool, fg_negative_pool).item()
-            bg_loss += val_loss_fn(bg_embedding_a, bg_positive_pool, bg_negative_pool).item()
-            logger.debug("VAL: fg_loss = {}, bg_loss = {}".format(fg_loss, bg_loss))
-            loss_tensor_computed = True
+            fg_loss /= batch_size
+            bg_loss /= batch_size
+            final_loss = (fg_loss + bg_loss) * 0.5
+            val_loss_meter.add(final_loss)
 
-        if not loss_tensor_computed:
-            continue
-        fg_loss /= batch_size
-        bg_loss /= batch_size
-        final_loss = (fg_loss + bg_loss) * 0.5
-        val_loss_meter.add(final_loss)
+            agg_fg_loss += fg_loss
+            agg_bg_loss += bg_loss
 
-        agg_fg_loss += fg_loss
-        agg_bg_loss += bg_loss
-
-    logger.info("VAL: Epoch {}".format(epoch))
-    logger.info(
-        "VAL: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(
-            agg_fg_loss / (idx + 1),
-            agg_bg_loss / (idx + 1),
-            final_loss / (idx + 1)))
-    summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
+        logger.info("VAL: Epoch {}".format(epoch))
+        logger.info(
+            "VAL: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(
+                agg_fg_loss / (idx + 1),
+                agg_bg_loss / (idx + 1),
+                final_loss / (idx + 1)))
+        summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
 
 
 if __name__ == "__main__":
