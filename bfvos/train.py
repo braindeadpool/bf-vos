@@ -65,6 +65,7 @@ def parse_args():
                         help='Iterations after which to evaluate validation set')
     # Training parameters
     parser.add_argument('-b', '--batch-size', type=int, default=1, help='Number of triplets in each batch')
+    parser.add_argument('--val-batch-size', type=int, default=1, help='Numbed of triplets in each validation set batch')
     parser.add_argument('-n', '--num-epochs', type=int, default=1)
     parser.add_argument('-r', '--learning-rate', type=float, default=0.01)
     parser.add_argument('-m', '--momentum', type=float, default=0.1)
