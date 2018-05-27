@@ -297,10 +297,10 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
         for idx, sample in enumerate(data_loader):
             if idx == num_val_batches:
                 break
-            if has_cuda:
-                # move input tensors to gpu
-                sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
-                sample['annotation'] = sample['annotation'].to(device=device)
+            # if has_cuda:
+            #     # move input tensors to gpu
+            #     sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
+            #     sample['annotation'] = sample['annotation'].to(device=device)
 
             sample_frames = sample['image']
             embeddings = model(sample_frames)
