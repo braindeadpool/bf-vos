@@ -51,6 +51,9 @@ if seed is not None:
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+# Counters
+global_iter_idx = 0
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -209,9 +212,10 @@ def create_triplet_pools(triplet_sample, embeddings, force_no_cuda=False):
 
 def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
           val_loss_meter, summary_writer, log_interval, checkpoint_interval, val_interval, num_val_batches):
+    global global_iter_idx
     agg_fg_loss = 0.
     agg_bg_loss = 0.
-    for idx, sample in enumerate(train_data_loader):
+    for idx, sample in enumerate(train_data_loader, start=global_iter_idx):
         if has_cuda:
             # move input tensors to gpu
             sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
@@ -285,6 +289,8 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             logger.info("Checkpoint saved at {}".format(ckpt_filename))
             model.to(device).train()
             model.freeze_feature_extraction()
+    logger.info("Finished epoch {} with {} iterations.".format(epoch + 1, idx))
+    global_iter_idx = idx
 
 
 def validate(epoch, train_idx, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1,
