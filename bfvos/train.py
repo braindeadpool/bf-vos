@@ -79,10 +79,13 @@ def parse_args():
     parser.add_argument('-f', '--log-file', type=str, default=None,
                         help='path to log file, setting this will log all messages to this file')
     parser.add_argument('-v', '--verbose', action='store_true', help='Print debug messages')
+    parser.add_argument('--checkpoint-path', type=str, default=None,
+                        help='Path to checkpoint file to resume training, otherwise train from scratch')
     return parser.parse_args()
 
 
 def main():
+    global global_iter_idx
     args = parse_args()
     if args.verbose:
         default_handler = logging.StreamHandler(sys.stdout)
@@ -117,13 +120,34 @@ def main():
         train_loss_fn.to(device)
         logger.debug("Model and loss function moved to CUDA")
 
-    # Load pre-trained model
+    start_epoch = 0
+    if args.checkpoint_path is not None:
+        epoch_substr = args.checkpoint_path.split('epoch_')[1]
+        epoch_str, batch_substr = epoch_substr.split('_')
+
+        batch_substr = batch_substr.split('batch_')
+        if len(batch_substr) > 1:
+            global_iter_idx = int(batch_substr[1].split('_')[0])
+        start_epoch = int(epoch_str)
+
     if has_cuda:
-        model.load_state_dict(
-            torch.load(deeplab_resnet_pre_trained_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+        if args.checkpoint_path is not None:
+            # Load pre-trained weights for entire model
+            model.load_state_dict(
+                torch.load(args.checkpoint_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+            logger.info("Loaded checkpoint from {}".format(args.checkpoint_path))
+        else:
+            # Load pre-trained weights for feature extraction head
+            model.load_state_dict(
+                torch.load(deeplab_resnet_pre_trained_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+            logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
     else:
-        model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
-    logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
+        if args.checkpoint_path is not None:
+            model.load_state_dict(torch.load(args.checkpoint_path))
+            logger.info("Loaded checkpoint from {}".format(args.checkpoint_path))
+        else:
+            model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
+            logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
     # Load to appropriate device and set to training mode but freeze feature extraction layer
     model.to(device).train()
     model.freeze_feature_extraction()
@@ -138,7 +162,7 @@ def main():
     summary_writer = SummaryWriter(tensorboard_save_dir)
 
     # Train
-    for epoch in tqdm(range(args.num_epochs)):
+    for epoch in tqdm(range(start_epoch, args.num_epochs)):
         logger.info("Epoch {}/{}".format(epoch + 1, args.num_epochs))
         train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
               val_loss_meter, summary_writer, args.log_interval, args.checkpoint_interval, args.val_interval,
@@ -283,7 +307,7 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
 
         if (idx + 1) % checkpoint_interval == 0:
             model.eval().cpu()
-            ckpt_filename = "ckpt_epoch_{}_batch_id_{}.pth".format(epoch + 1, idx + 1)
+            ckpt_filename = "ckpt_epoch_{}_batch_{}.pth".format(epoch + 1, idx + 1)
             ckpt_path = os.path.join(checkpoint_dir, ckpt_filename)
             torch.save(model.state_dict(), ckpt_path)
             logger.info("Checkpoint saved at {}".format(ckpt_filename))
