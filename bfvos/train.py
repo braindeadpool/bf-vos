@@ -123,12 +123,11 @@ def main():
     start_epoch = 0
     if args.checkpoint_path is not None:
         epoch_substr = args.checkpoint_path.split('epoch_')[1]
-        epoch_str, batch_substr = epoch_substr.split('_')
+        start_epoch = int(epoch_substr.split('_')[0])
 
-        batch_substr = batch_substr.split('batch_')
+        batch_substr = epoch_substr.split('_')[1].split('batch_')
         if len(batch_substr) > 1:
             global_iter_idx = int(batch_substr[1].split('_')[0])
-        start_epoch = int(epoch_str)
 
     if has_cuda:
         if args.checkpoint_path is not None:
