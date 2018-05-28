@@ -140,20 +140,21 @@ def main():
         train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_loss_fn, optimizer, train_loss_meter,
               val_loss_meter, summary_writer, args.log_interval, args.checkpoint_interval, args.val_interval,
               args.num_val_batches)
-        # Save final model
-        model.eval().cpu()
-        save_model_filename = "epoch_{}_{}.model".format(args.num_epochs,
-                                                         str(time.time()).replace(" ", "_").replace(".", "_"))
-        save_model_path = os.path.join(model_dir, save_model_filename)
-        torch.save(model.state_dict(), save_model_path)
-        logger.info("Model saved to {}".format(save_model_filename))
 
-        training_config_save_path = os.path.join(config_save_dir, save_model_filename.replace('.model', '.json'))
-        training_config = vars(args)
-        training_config['device'] = str(torch.device)
-        with open(training_config_save_path, 'w') as f:
-            json.dump(training_config, f)
-        logger.info("Training config saved to {}".format(training_config_save_path))
+    # Save final model after all epochs
+    model.eval().cpu()
+    save_model_filename = "epoch_{}_{}.model".format(args.num_epochs,
+                                                     str(time.time()).replace(" ", "_").replace(".", "_"))
+    save_model_path = os.path.join(model_dir, save_model_filename)
+    torch.save(model.state_dict(), save_model_path)
+    logger.info("Model saved to {}".format(save_model_filename))
+
+    training_config_save_path = os.path.join(config_save_dir, save_model_filename.replace('.model', '.json'))
+    training_config = vars(args)
+    training_config['device'] = str(torch.device)
+    with open(training_config_save_path, 'w') as f:
+        json.dump(training_config, f)
+    logger.info("Training config saved to {}".format(training_config_save_path))
 
 
 def create_triplet_pools(triplet_sample, embeddings, force_no_cuda=False):
@@ -246,7 +247,7 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
         fg_loss /= batch_size
         bg_loss /= batch_size
         final_loss = fg_loss + bg_loss
-        train_loss_meter.add(final_loss)
+        train_loss_meter.add(final_loss.item())
         logger.debug("TRAIN: fg_loss = {}, bg_loss = {}, final_loss={}".format(fg_loss, bg_loss, final_loss))
 
         # Backpropagation
@@ -259,28 +260,22 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             model.freeze_bn()
             model.eval()
             # validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches)
-            validate(epoch, val_data_loader, model, train_loss_fn, val_loss_meter, summary_writer, num_val_batches)
+            validate(epoch, idx, val_data_loader, model, train_loss_fn, val_loss_meter, summary_writer, num_val_batches)
             model.train()
             model.freeze_feature_extraction()
 
         # Logging
         agg_fg_loss += fg_loss.item()
         agg_bg_loss += bg_loss.item()
+        agg_final_loss = agg_fg_loss + agg_bg_loss
         if (idx + 1) % log_interval == 0:
             logger.info("TRAIN: Epoch: {}, Batch: {}".format(epoch + 1, idx + 1))
             logger.info("TRAIN: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(agg_fg_loss / (idx + 1),
                                                                                              agg_bg_loss / (idx + 1),
-                                                                                             (
-                                                                                                 agg_fg_loss + agg_bg_loss) / (
+                                                                                             agg_final_loss / (
                                                                                                  idx + 1)))
-            summary_writer.add_scalar('train_loss', train_loss_meter.value()[0], idx + 1)
-            for i, o in enumerate(optimizer.param_groups):
-                summary_writer.add_scalar('train_lr_group{}'.format(i), o['lr'], idx + 1)
-                # for name, param in model.named_parameters():
-                #     name = name.replace('.', '/')
-                #     summary_writer.add_histogram(name, param, idx + 1, bins="auto")
-                # if param.requires_grad:
-                #     summary_writer.add_histogram(name + '/grad', param.grad, idx + 1, bins="auto")
+            summary_writer.add_scalar('current_train_loss', final_loss.item(), idx + 1)
+            summary_writer.add_scalar('avg_train_loss', agg_final_loss / (idx + 1), idx + 1)
 
         if (idx + 1) % checkpoint_interval == 0:
             model.eval().cpu()
@@ -292,7 +287,7 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
             model.freeze_feature_extraction()
 
 
-def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1,
+def validate(epoch, train_idx, data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches=-1,
              force_no_cuda=False):
     with torch.no_grad():
         agg_fg_loss = 0.
@@ -322,7 +317,7 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
                 if triplet_pools is None:
                     # Skip as not enough triplet samples were generated
                     # (possibly due to downsampled/low-res ground truth)
-                    logger.debug("Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
+                    logger.debug("VAL: Skipping iteration {}, batch {}".format(idx + 1, batch_idx))
                     continue
                 else:
                     fg_embedding_a, fg_positive_pool, fg_negative_pool, bg_embedding_a, bg_positive_pool, bg_negative_pool = triplet_pools
@@ -341,13 +336,14 @@ def validate(epoch, data_loader, model, val_loss_fn, val_loss_meter, summary_wri
             agg_fg_loss += fg_loss
             agg_bg_loss += bg_loss
 
-        logger.info("VAL: Epoch {}".format(epoch))
+        agg_final_loss = agg_fg_loss + agg_bg_loss
+        logger.info("VAL: Epoch {}, Train idx {}, Val idx {}".format(epoch + 1, train_idx + 1, idx + 1))
         logger.info(
             "VAL: Avg FG Loss: {}, Avg BG Loss: {}, Avg Total Loss: {}".format(
                 agg_fg_loss / (idx + 1),
                 agg_bg_loss / (idx + 1),
-                final_loss / (idx + 1)))
-        summary_writer.add_scalar('val_loss', val_loss_meter.value()[0], idx + 1)
+                agg_final_loss / (idx + 1)))
+        summary_writer.add_scalar('avg_val_loss', agg_final_loss / (idx + 1), train_idx + 1)
 
 
 if __name__ == "__main__":
