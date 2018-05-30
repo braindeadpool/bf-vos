@@ -112,13 +112,12 @@ def retrieve(args):
 
     # For each pixel in input sequence,
     # find k nearest neighbor in reference image and do majority voting to assign label
-    output_mask[np.sum(input_mask_flattened[indices], axis=1) > args.k / 2] = 1
+    output_mask[np.sum(input_mask_flattened[indices], axis=1) > args.k / 2] = 255.0
     output_mask = output_mask.reshape([num_frames] + reduced_image_dims + [1])
 
     # Save each output mask (segmentation results)
     for idx, output_path in enumerate(output_file_paths):
-        Image.fromarray(output_mask[idx].astype('uint8').squeeze(),
-                        mode='L').resize(image_dims, resample=Image.BILINEAR).save(output_path)
+        Image.fromarray(output_mask[idx].astype('uint8').squeeze()).resize(image_dims, resample=Image.BILINEAR).save(output_path)
 
 
 def main():
