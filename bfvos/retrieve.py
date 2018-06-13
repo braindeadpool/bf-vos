@@ -96,7 +96,7 @@ def retrieve(args):
 
     # Convert input image (reference image) to embedding
     input_image_tensor = torch.unsqueeze(torch.from_numpy(np.array(input_image).transpose(2, 0, 1)), 0)
-    input_image_embedding = model(input_image_tensor).numpy().reshape((-1, embedding_vector_dims))
+    input_image_embedding = model(input_image_tensor).cpu().numpy().reshape((-1, embedding_vector_dims))
     input_mask_flattened = input_mask.flatten()
 
     logger.info("Computed embedding vectors for reference image")
@@ -104,7 +104,7 @@ def retrieve(args):
     # Build nearest neighbor search tree and fit it to reference pixels
     nns = NearestNeighbors(n_neighbors=args.k, algorithm='ball_tree').fit(input_image_embedding)
 
-    all_embeddings = all_embeddings.numpy().reshape((-1, embedding_vector_dims))
+    all_embeddings = all_embeddings.cpu().numpy().reshape((-1, embedding_vector_dims))
     output_mask = np.zeros(all_embeddings.shape[0])
 
     distances, indices = nns.kneighbors(all_embeddings)
@@ -117,7 +117,8 @@ def retrieve(args):
 
     # Save each output mask (segmentation results)
     for idx, output_path in enumerate(output_file_paths):
-        Image.fromarray(output_mask[idx].astype('uint8').squeeze()).resize(image_dims, resample=Image.BILINEAR).save(output_path)
+        Image.fromarray(output_mask[idx].astype('uint8').squeeze()).resize(image_dims, resample=Image.BILINEAR).save(
+            output_path)
 
 
 def main():
