@@ -8,27 +8,31 @@ from .deeplabv2resnet import DeepLabV2Stripped
 from .utils import init_weights
 
 
-class BFVOSNet(DeepLabV2Stripped):
+class BFVOSNet(nn.Module):
     def __init__(self, embedding_vector_dims=128):
         """
 
         :param embedding_vector_dims: Embedding vector dimensions
         """
-        super().__init__(n_blocks=[3, 4, 23, 3])
-        # TODO: Concatenate array of pixel numbers and frame numbers (spatial and temporal information)
-        # Add the embedding head
-        self.add_module('eh_layer1',
-                        nn.Sequential(
-                            OrderedDict([
-                                ('conv1', nn.Conv2d(2048, embedding_vector_dims, 1, 1)),
-                                ('relu1', nn.ReLU()),
-                            ])
-                        ))
-        self.add_module('eh_layer2', nn.Conv2d(embedding_vector_dims, embedding_vector_dims, 1, 1))
+        super().__init__()
+        self.feature_extractor = DeepLabV2Stripped(n_blocks=[3, 4, 23, 3])
+        self.embedding_head = nn.Sequential(
+            OrderedDict([
+                ('conv1', nn.Conv2d(2048 + 3, embedding_vector_dims, 1, 1)),
+                ('relu1', nn.ReLU())
+            ]))
+        self.embedding_head.add_module('eh_layer2', nn.Conv2d(embedding_vector_dims, embedding_vector_dims, 1, 1))
         init_weights(self)
 
-    def forward(self, x):
-        embedding = super().forward(x)
+    def forward(self, x, y):
+        """
+        Forward pass
+        :param x: Image batch tensor
+        :param y: Corresponding 3 channel tensor with (i, j, t) spatio-temporal information
+        :return:
+        """
+        deeplab_features = self.feature_extractor.forward(x)
+        embedding = self.embedding_head(torch.cat((deeplab_features, y), dim=1))
         normalized_embedding = embedding / embedding.pow(2).sum(1, keepdim=True).sqrt()
         return normalized_embedding
 

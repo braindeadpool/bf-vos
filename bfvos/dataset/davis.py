@@ -29,6 +29,7 @@ class DavisDataset(Dataset):
         elif phase == 'testchallenge':
             self._base_dir = os.path.join(self._base_dir, 'testchallenge')
         self._image_size = image_size
+        self._reduced_image_size = [self._image_size[0] // 8 + 1, self._image_size[1] // 8 + 1]
         self._images_dir = os.path.join(self._base_dir, 'JPEGImages', '480p')
         self._annotations_dir = os.path.join(self._base_dir, 'Annotations', '480p')
         self._transform = transform
@@ -66,11 +67,16 @@ class DavisDataset(Dataset):
         annotation = Image.open(annotation_path).convert('L')
         if self._image_size is not None:
             image = image.resize(self._image_size)
-            annotation = annotation.resize((self._image_size[0] // 8 + 1, self._image_size[1] // 8 + 1))
+            annotation = annotation.resize(self._reduced_image_size)
 
         # normalize the image
         image = np.asarray(image)
         image = (image - image.mean()) / image.std()
+
+        # spatial_frame is array of shape h x w x 2 where spatial_frame[i][j] = [i, j]
+        spatial_frame = np.dstack(np.mgrid[:self._reduced_image_size[0], :self._reduced_image_size[1]])
+        temporal_frame = np.ones(self._reduced_image_size) * frame_no
+        spatio_temporal_frame = np.dstack((spatial_frame, temporal_frame))
 
         # convert annotation to binary image
         annotation = np.asarray(annotation).copy()
@@ -78,6 +84,7 @@ class DavisDataset(Dataset):
         sample = {
             'image': image,
             'annotation': annotation,
+            'spatio_temporal_frame': spatio_temporal_frame,
             'frame_no': frame_no,
             'label': label
         }
@@ -129,6 +136,7 @@ class ToTensor(object):
         # torch image: C X H X W
         return {'image': torch.from_numpy(sample['image'].transpose((2, 0, 1))),
                 'annotation': torch.from_numpy(sample['annotation'].astype(np.uint8)),
+                'spatio_temporal_frame': torch.from_numpy(sample['spatio_temporal_frame'].transpose((2, 0, 1))),
                 'frame_no': sample['frame_no'],
                 'label': sample['label']
                 }

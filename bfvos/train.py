@@ -138,14 +138,15 @@ def main():
         else:
             # Load pre-trained weights for feature extraction head
             model.load_state_dict(
-                torch.load(deeplab_resnet_pre_trained_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+                torch.load(deeplab_resnet_pre_trained_path, map_location=lambda storage, loc: storage.cuda(gpu_id)),
+                strict=False)
             logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
     else:
         if args.checkpoint_path is not None:
             model.load_state_dict(torch.load(args.checkpoint_path))
             logger.info("Loaded checkpoint from {}".format(args.checkpoint_path))
         else:
-            model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path))
+            model.load_state_dict(torch.load(deeplab_resnet_pre_trained_path), strict=False)
             logger.info("Loaded DeepLab ResNet from {}".format(deeplab_resnet_pre_trained_path))
     # Load to appropriate device and set to training mode but freeze feature extraction layer
     model.to(device).train()
@@ -238,13 +239,18 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
     global global_iter_idx
     agg_fg_loss = 0.
     agg_bg_loss = 0.
+
     for idx, sample in enumerate(train_data_loader, start=global_iter_idx):
         if has_cuda:
             # move input tensors to gpu
             sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
             sample['annotation'] = sample['annotation'].to(device=device)
+            sample['spatio_temporal_frame'] = sample['spatio_temporal_frame'].to(device=device,
+                                                                                 dtype=config.DEFAULT_DTYPE)
         sample_frames = sample['image']
-        embeddings = model(sample_frames)
+        spatio_temporal_frame = sample['spatio_temporal_frame']
+        # create spatio-temporal frame input to pass to embedding head
+        embeddings = model(sample_frames, spatio_temporal_frame)
 
         fg_loss = 0.
         bg_loss = 0.
