@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block body_additions %}
+onload="clear_canvas()"
+{% endblock %}
+
+{% block main %}
+<h3> Mark the region representing the object to segment</h3>
+
+<div class="row">
+    <canvas id="jPolygon" width="640" height="480" style="cursor:crosshair" data-imgsrc="/fetch_image/{{ filename }}"
+            onmousedown="point_it(event)" oncontextmenu="return false;">
+        Your browser does not support the HTML5 canvas tag.
+    </canvas>
+</div>
+
+<div class="row tr10">
+    <div>
+        <button type="button" class="btn" onclick="undo()">Undo</button>
+        <button type="button" class="btn" onclick="clear_canvas()">Clear</button>
+        <p>Press <strong>Left Click</strong> to draw a point.</p>
+        <p><strong>CTRL+Click</strong> or <strong>Right Click</strong> to close the polygon.</p>
+    </div>
+    <div>
+        <p><strong>Coordinates:</strong></p>
+        <textarea id="coordinates" disabled="disabled" style="width:300px; height:200px;"></textarea>
+    </div>
+</div>
+
+<div class="row tr10">
+    <button type="button" class="btn btn-primary" id="segment_btn">Run segmentation</button>
+</div>
+<script type="text/javascript" src="{{ url_for('static', filename='jPolygon.js') }}"></script>
+{% endblock %}
+
+{% block additional_scripts %}
+<script type="text/javascript">
+$("#segment_btn").click(function() {
+    var coordinates = $.trim($("#coordinates").val());
+    console.log(coordinates);
+    $.ajax({
+        url: '/run_segmentation/{{ filename }}',
+        type: 'POST',
+        data: JSON.stringify(coordinates),
+        contentType: 'application/json; charset=utf-8',
+        dataType: 'json',
+        async: false,
+        success: function(msg) {alert(msg);}
+        });
+    });
+</script>
+{% endblock %}

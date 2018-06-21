@@ -15,7 +15,7 @@ logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 # Set paths
-root_dir = os.path.join('bfvos')
+root_dir = os.path.join(os.path.abspath(__file__), 'bfvos')
 
 # Pytorch configs
 torch.set_default_tensor_type(config.DEFAULT_TENSOR_TYPE)
@@ -28,6 +28,11 @@ if torch.cuda.is_available():
     has_cuda = True
     logger.info('Using GPU: {} '.format(gpu_id))
 device = torch.device("cuda:{}".format(gpu_id) if has_cuda else "cpu")
+
+# Default config
+image_dims = [256, 256]
+reduced_image_dims = list(np.array(image_dims) // 8 + 1)
+embedding_vector_dims = 128
 
 
 def load_image(input_frame_path, image_dims):
@@ -43,46 +48,11 @@ def load_mask(input_mask_path, image_dims):
     return input_mask
 
 
-def retrieve(args):
-    # Default config
-    image_dims = [256, 256]
-    embedding_vector_dims = 128
-    if args.model_config_file is not None:
-        with open(args.model_config_file) as f:
-            model_config = json.load(f)
-            image_dims = list(map(int, model_config['image_dims']))
-            embedding_vector_dims = int(model_config['embedding_vector_dims'])
-
-    reduced_image_dims = list(np.array(image_dims) // 8 + 1)
-
-    sequence_frames_batch = []
-    output_file_paths = []
-    for input_frame_filename in os.listdir(args.sequence_dir):
-        input_frame_path = os.path.join(args.sequence_dir, input_frame_filename)
-        filename, ext = os.path.splitext(input_frame_filename)
-        if os.path.isfile(input_frame_path) and ext in ['.jpeg', '.jpg', '.png']:
-            sequence_frames_batch.append(load_image(input_frame_path, image_dims))
-            output_file_paths.append(os.path.join(args.output_dir, filename + '_output' + ext))
-
-    input_image = load_image(args.input_image_path, image_dims)
-    input_mask = load_mask(args.input_mask_path, reduced_image_dims)
-
-    # Initialize and load model with config
-    model = network.BFVOSNet(embedding_vector_dims=embedding_vector_dims)
-
-    if has_cuda:
-        model = model.cuda()
-        logger.debug("Model initialized and moved to CUDA")
-        model.load_state_dict(torch.load(args.model_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
-    else:
-        model.load_state_dict(torch.load(args.model_path, map_location=lambda storage, loc: storage))
-    logger.info("Loaded weights from {}".format(args.model_path))
-    model.to(device).eval()
-
+def batch_segment(sequence_frames_batch, input_image, input_mask, output_file_paths, model, batch_size, k):
     # Convert input to tensor of batch embeddings
     num_frames = len(sequence_frames_batch)
     idx = 0
-    batch_size = args.batch_size if args.batch_size > 0 else num_frames
+    batch_size = batch_size if batch_size > 0 else num_frames
     all_embeddings = torch.Tensor()
     while idx < num_frames:
         current_batch_tensor = torch.from_numpy(
@@ -102,7 +72,7 @@ def retrieve(args):
     logger.info("Computed embedding vectors for reference image")
 
     # Build nearest neighbor search tree and fit it to reference pixels
-    nns = NearestNeighbors(n_neighbors=args.k, algorithm='ball_tree').fit(input_image_embedding)
+    nns = NearestNeighbors(n_neighbors=k, algorithm='ball_tree').fit(input_image_embedding)
 
     all_embeddings = all_embeddings.cpu().numpy().reshape((-1, embedding_vector_dims))
     output_mask = np.zeros(all_embeddings.shape[0])
@@ -112,13 +82,51 @@ def retrieve(args):
 
     # For each pixel in input sequence,
     # find k nearest neighbor in reference image and do majority voting to assign label
-    output_mask[np.sum(input_mask_flattened[indices], axis=1) > args.k / 2] = 255.0
+    output_mask[np.sum(input_mask_flattened[indices], axis=1) > k / 2] = 255.0
     output_mask = output_mask.reshape([num_frames] + reduced_image_dims + [1])
 
     # Save each output mask (segmentation results)
     for idx, output_path in enumerate(output_file_paths):
         Image.fromarray(output_mask[idx].astype('uint8').squeeze()).resize(image_dims, resample=Image.BILINEAR).save(
             output_path)
+
+    return True
+
+
+def retrieve(args):
+    global image_dims, embedding_vector_dims, reduced_image_dims
+    if args.model_config_file is not None:
+        with open(args.model_config_file) as f:
+            model_config = json.load(f)
+            image_dims = list(map(int, model_config['image_dims']))
+            embedding_vector_dims = int(model_config['embedding_vector_dims'])
+            reduced_image_dims = list(np.array(image_dims) // 8 + 1)
+
+    sequence_frames_batch = []
+    output_file_paths = []
+    for input_frame_filename in os.listdir(args.sequence_dir):
+        input_frame_path = os.path.join(args.sequence_dir, input_frame_filename)
+        filename, ext = os.path.splitext(input_frame_filename)
+        if os.path.isfile(input_frame_path) and ext in ['.jpeg', '.jpg', '.png']:
+            sequence_frames_batch.append(load_image(input_frame_path, image_dims))
+            output_file_paths.append(os.path.join(args.output_dir, filename + '_output' + ext))
+
+    input_image = load_image(args.input_image_path, image_dims)
+    input_mask = load_mask(args.input_mask_path, reduced_image_dims)
+
+    # Initialize and load model with config
+    model = network.BFVOSNet(embedding_vector_dims=embedding_vector_dims)
+    if has_cuda:
+        model = model.cuda()
+        logger.debug("Model initialized and moved to CUDA")
+        model.load_state_dict(torch.load(args.model_path, map_location=lambda storage, loc: storage.cuda(gpu_id)))
+    else:
+        model.load_state_dict(torch.load(args.model_path, map_location=lambda storage, loc: storage))
+    logger.info("Loaded weights from {}".format(args.model_path))
+    model.to(device).eval()
+
+    return batch_segment(sequence_frames_batch, input_image, input_mask, output_file_paths, model, args.batch_size,
+                         args.k)
 
 
 def main():

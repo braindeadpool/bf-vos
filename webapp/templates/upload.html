@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+
+{% block main %}
+<h3> Uploaded Frames</h3>
+<table>
+    {% for filename in file_info %}
+    {% if loop.index0 % 5 == 0 %}
+    <tr>
+        {% endif %}
+
+            <td><a href="/mark/{{ filename }}"><img src="{{ url_for('fetch_image', filename=filename) }}"
+                     class="img-thumbnail"><br/><span>{{ filename }}</span></a></td>
+
+        {% if loop.index0 % 5 == 4 %}
+    </tr>
+    {% endif %}
+
+    {% endfor %}
+</table>
+{% endblock %}

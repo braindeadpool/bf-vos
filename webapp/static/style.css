@@ -1,0 +1,19 @@
+body {
+  padding-top: 54px;
+}
+
+@media (min-width: 992px) {
+  body {
+    padding-top: 56px;
+  }
+}
+
+.tr10 {
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+.thumbnail {
+    height: 100px;
+    width: auto;
+}

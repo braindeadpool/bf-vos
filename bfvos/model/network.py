@@ -37,10 +37,8 @@ class BFVOSNet(nn.Module):
         return normalized_embedding
 
     def freeze_feature_extraction(self):
-        for name, m in self.named_children():
-            if name.find('fe_') != -1:
-                for param in m.parameters():
-                    param.requires_grad = False
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
 
 
 if __name__ == "__main__":

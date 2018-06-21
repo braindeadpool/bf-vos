@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+
+{% block additional_scripts %}
+<script src="{{ url_for('static', filename='jquery.ui.widget.js') }}"></script>
+<script src="{{ url_for('static', filename='jquery.iframe-transport.js') }}"></script>
+<script src="{{ url_for('static', filename='jquery.fileupload.js') }}"></script>
+<script>
+/*jslint unparam: true */
+/*global window, $ */
+$(function () {
+    'use strict';
+    $('#fileupload').fileupload({
+        url: '/upload_ajax',
+        singleFileUploads: false,
+        dataType: 'json',
+        done: function (e, data) {
+            window.location = "/uploaded";
+        },
+        progressall: function (e, data) {
+            var progress = parseInt(data.loaded / data.total * 100, 10);
+            $('#progress .progress-bar').css(
+                'width',
+                progress + '%'
+            );
+        }
+    }).prop('disabled', !$.support.fileInput)
+        .parent().addClass($.support.fileInput ? undefined : 'disabled');
+});
+</script>
+{% endblock %}
