@@ -2,7 +2,7 @@ from bfvos.retrieve import *
 import matplotlib.path as mplp
 
 # Configs
-model_path = os.path.join(root_dir, 'epoch_10_1527515876_5409408.model')
+model_path = os.path.join(root_dir, 'ckpt_epoch_3_batch_1050.pth')
 batch_size = 10
 k = 5
 

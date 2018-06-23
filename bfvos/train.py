@@ -290,7 +290,6 @@ def train(epoch, train_data_loader, val_data_loader, model, train_loss_fn, val_l
 
         # Evaluate validation loss
         if (idx + 1) % val_interval == 0:
-            model.freeze_bn()
             model.eval()
             # validate(epoch, val_data_loader, model, val_loss_fn, val_loss_meter, summary_writer, num_val_batches)
             validate(epoch, idx, val_data_loader, model, train_loss_fn, val_loss_meter, summary_writer, num_val_batches)

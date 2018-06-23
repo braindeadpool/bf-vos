@@ -43,7 +43,6 @@ class BFVOSNet(nn.Module):
 
 if __name__ == "__main__":
     model = BFVOSNet()
-    model.freeze_bn()
     model.eval()
 
     image = torch.autograd.Variable(torch.randn(1, 3, 512, 512))
