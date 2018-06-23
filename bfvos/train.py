@@ -333,9 +333,12 @@ def validate(epoch, train_idx, data_loader, model, val_loss_fn, val_loss_meter, 
                 # move input tensors to gpu
                 sample['image'] = sample['image'].to(device=device, dtype=config.DEFAULT_DTYPE)
                 sample['annotation'] = sample['annotation'].to(device=device)
+                sample['spatio_temporal_frame'] = sample['spatio_temporal_frame'].to(device=device,
+                                                                                     dtype=config.DEFAULT_DTYPE)
 
             sample_frames = sample['image']
-            embeddings = model(sample_frames)
+            spatio_temporal_frame = sample['spatio_temporal_frame']
+            embeddings = model(sample_frames, spatio_temporal_frame)
 
             fg_loss = 0.
             bg_loss = 0.
